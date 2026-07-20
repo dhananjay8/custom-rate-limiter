@@ -1,0 +1,18 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "baseName": {
+      "value": "custom-rate-limiter"
+    },
+    "location": {
+      "value": "eastus"
+    },
+    "containerImage": {
+      "value": "ghcr.io/dhananjay8/custom-rate-limiter:latest"
+    },
+    "appEnv": {
+      "value": "production"
+    }
+  }
+}

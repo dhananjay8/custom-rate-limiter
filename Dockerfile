@@ -7,15 +7,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Poetry
-RUN pip install --no-cache-dir poetry==1.7.1
-
-# Copy dependency files
-COPY pyproject.toml poetry.lock* ./
-
-# Install dependencies (no dev dependencies in production)
-RUN poetry config virtualenvs.create false \
-    && poetry install --no-interaction --no-ansi --without dev
+# Copy and install dependencies (pip-based for reliability)
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY app/ ./app/
