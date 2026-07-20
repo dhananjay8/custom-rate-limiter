@@ -8,7 +8,8 @@ services:
     ports:
       - "5000:5000"
     environment:
-      - RATE_LIMIT_STORAGE=memory
+      - RATE_LIMIT_STORAGE=redis
+      - REDIS_URL=redis://redis:6379/0
       - LOG_LEVEL=INFO
       - APP_ENV=production
       - FOO_ALGORITHM=fixed_window
@@ -21,15 +22,36 @@ services:
       - CLIENT_PREMIUM_FOO_WINDOW=60
       - CLIENT_PREMIUM_BAR_LIMIT=250
       - CLIENT_PREMIUM_BAR_WINDOW=60
+      - CIRCUIT_BREAKER_ENABLED=true
+      - ADAPTIVE_ENABLED=true
+      - COALESCING_ENABLED=true
+    depends_on:
+      redis:
+        condition: service_healthy
     volumes:
       - rate_limiter_data:/app/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 10s
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    command: redis-server --appendonly yes
+
 volumes:
   rate_limiter_data:
+  redis_data:

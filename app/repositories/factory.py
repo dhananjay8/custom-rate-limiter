@@ -12,6 +12,7 @@ class RepositoryFactory:
     """Factory for creating storage repository instances.
 
     Creates the appropriate repository based on configuration.
+    Optionally wraps with circuit breaker for resilience.
     """
 
     @staticmethod
@@ -22,16 +23,39 @@ class RepositoryFactory:
             settings: Application settings.
 
         Returns:
-            A repository instance.
+            A repository instance (optionally wrapped with circuit breaker).
 
         Raises:
             ValueError: If the storage backend is not supported.
         """
         if settings.rate_limit_storage == StorageBackend.MEMORY:
-            return MemoryRepository()
+            repo = MemoryRepository()
         elif settings.rate_limit_storage == StorageBackend.SQLITE:
-            return SQLiteRepository(db_path=settings.sqlite_db_path)
+            repo = SQLiteRepository(db_path=settings.sqlite_db_path)
+        elif settings.rate_limit_storage == StorageBackend.REDIS:
+            from app.repositories.redis_repository import RedisRepository
+
+            repo = RedisRepository(
+                url=settings.redis_url,
+                key_prefix=settings.redis_key_prefix,
+            )
         else:
             raise ValueError(
                 f"Unsupported storage backend: {settings.rate_limit_storage}"
             )
+
+        # Wrap with circuit breaker if enabled
+        if settings.circuit_breaker_enabled:
+            from app.repositories.resilient_repository import ResilientRepository
+            from app.resilience.circuit_breaker import CircuitBreaker
+
+            circuit_breaker = CircuitBreaker(
+                failure_threshold=settings.circuit_breaker_failure_threshold,
+                recovery_timeout=settings.circuit_breaker_recovery_timeout,
+            )
+            return ResilientRepository(
+                repository=repo,
+                circuit_breaker=circuit_breaker,
+            )
+
+        return repo

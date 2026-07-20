@@ -15,6 +15,7 @@ class StorageBackend(str, Enum):
 
     MEMORY = "memory"
     SQLITE = "sqlite"
+    REDIS = "redis"
 
 
 class AlgorithmType(str, Enum):
@@ -57,6 +58,45 @@ class Settings(BaseSettings):
     sqlite_db_path: str = Field(
         default="rate_limiter.db", description="Path to SQLite database"
     )
+    redis_url: str = Field(
+        default="redis://localhost:6379/0", description="Redis connection URL"
+    )
+    redis_key_prefix: str = Field(
+        default="ratelimit:", description="Prefix for Redis keys"
+    )
+
+    # Circuit Breaker
+    circuit_breaker_enabled: bool = Field(
+        default=True, description="Enable circuit breaker on storage"
+    )
+    circuit_breaker_failure_threshold: int = Field(
+        default=5, gt=0, description="Failures before circuit opens"
+    )
+    circuit_breaker_recovery_timeout: float = Field(
+        default=30.0, gt=0, description="Seconds before recovery attempt"
+    )
+
+    # Adaptive Rate Limiting
+    adaptive_enabled: bool = Field(
+        default=True, description="Enable adaptive rate limiting"
+    )
+    adaptive_sample_interval: float = Field(
+        default=5.0, gt=0, description="Seconds between metric samples"
+    )
+
+    # Request Coalescing
+    coalescing_enabled: bool = Field(
+        default=True, description="Enable request coalescing"
+    )
+    coalescing_window_ms: float = Field(
+        default=25.0, ge=0, description="Coalescing window in milliseconds"
+    )
+
+    # Weighted Operations
+    foo_get_weight: int = Field(default=1, ge=1, description="Weight for GET /foo")
+    foo_post_weight: int = Field(default=5, ge=1, description="Weight for POST /foo")
+    bar_get_weight: int = Field(default=1, ge=1, description="Weight for GET /bar")
+    bar_post_weight: int = Field(default=3, ge=1, description="Weight for POST /bar")
 
     # Algorithm mapping per endpoint
     foo_algorithm: AlgorithmType = Field(

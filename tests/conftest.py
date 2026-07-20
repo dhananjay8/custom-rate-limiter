@@ -55,6 +55,9 @@ def test_settings() -> Settings:
         client_premium_foo_window=60,
         client_premium_bar_limit=250,
         client_premium_bar_window=60,
+        adaptive_enabled=False,
+        coalescing_enabled=False,
+        circuit_breaker_enabled=False,
     )
 
 
@@ -76,6 +79,9 @@ def test_settings_sqlite() -> Settings:
         client_premium_foo_window=60,
         client_premium_bar_limit=250,
         client_premium_bar_window=60,
+        adaptive_enabled=False,
+        coalescing_enabled=False,
+        circuit_breaker_enabled=False,
     )
 
 

@@ -14,6 +14,7 @@ from app.algorithms.token_bucket import TokenBucketAlgorithm
 from app.config.settings import AlgorithmType, Settings, StorageBackend
 from app.repositories.factory import RepositoryFactory
 from app.repositories.memory_repository import MemoryRepository
+from app.repositories.resilient_repository import ResilientRepository
 from app.repositories.sqlite_repository import SQLiteRepository
 
 
@@ -65,16 +66,27 @@ class TestRepositoryFactory:
     """Tests for repository factory."""
 
     def test_create_memory_repository(self) -> None:
-        """Factory creates MemoryRepository."""
+        """Factory creates MemoryRepository wrapped in ResilientRepository."""
         settings = Settings(rate_limit_storage=StorageBackend.MEMORY)
         repo = RepositoryFactory.create(settings)
-        assert isinstance(repo, MemoryRepository)
+        assert isinstance(repo, ResilientRepository)
+        assert isinstance(repo.inner_repository, MemoryRepository)
 
     def test_create_sqlite_repository(self) -> None:
-        """Factory creates SQLiteRepository."""
+        """Factory creates SQLiteRepository wrapped in ResilientRepository."""
         settings = Settings(
             rate_limit_storage=StorageBackend.SQLITE,
             sqlite_db_path=":memory:",
         )
         repo = RepositoryFactory.create(settings)
-        assert isinstance(repo, SQLiteRepository)
+        assert isinstance(repo, ResilientRepository)
+        assert isinstance(repo.inner_repository, SQLiteRepository)
+
+    def test_create_without_circuit_breaker(self) -> None:
+        """Factory creates raw repo when circuit breaker is disabled."""
+        settings = Settings(
+            rate_limit_storage=StorageBackend.MEMORY,
+            circuit_breaker_enabled=False,
+        )
+        repo = RepositoryFactory.create(settings)
+        assert isinstance(repo, MemoryRepository)

@@ -29,6 +29,9 @@ class TestFullFlowMemory:
             client_premium_foo_window=60,
             client_premium_bar_limit=100,
             client_premium_bar_window=60,
+            adaptive_enabled=False,
+            coalescing_enabled=False,
+            circuit_breaker_enabled=False,
         )
         application = create_app(settings=settings)
         application.config["TESTING"] = True
@@ -123,6 +126,9 @@ class TestFullFlowSQLite:
             client_premium_foo_window=60,
             client_premium_bar_limit=100,
             client_premium_bar_window=60,
+            adaptive_enabled=False,
+            coalescing_enabled=False,
+            circuit_breaker_enabled=False,
         )
         application = create_app(settings=settings)
         application.config["TESTING"] = True
@@ -178,6 +184,9 @@ class TestAlgorithmSwitching:
             client_premium_foo_window=60,
             client_premium_bar_limit=100,
             client_premium_bar_window=60,
+            adaptive_enabled=False,
+            coalescing_enabled=False,
+            circuit_breaker_enabled=False,
         )
         app = create_app(settings=settings)
         app.config["TESTING"] = True
@@ -206,6 +215,9 @@ class TestAlgorithmSwitching:
             client_premium_foo_window=60,
             client_premium_bar_limit=100,
             client_premium_bar_window=60,
+            adaptive_enabled=False,
+            coalescing_enabled=False,
+            circuit_breaker_enabled=False,
         )
         app = create_app(settings=settings)
         app.config["TESTING"] = True

@@ -99,3 +99,47 @@ def create_routes(
         rate_limiter.repository.clear()
         rate_limiter.metrics.reset()
         return jsonify({"status": "reset_complete"}), 200
+
+    # --- Advanced Feature Endpoints ---
+
+    @app.route("/admin/adaptive", methods=["GET"])
+    def admin_adaptive() -> tuple[Any, int]:
+        """GET /admin/adaptive - Adaptive rate limiter status."""
+        adaptive = current_app.config.get("ADAPTIVE")
+        if adaptive is None:
+            return jsonify({"enabled": False}), 200
+        return jsonify(adaptive.get_status()), 200
+
+    @app.route("/admin/circuit-breaker", methods=["GET"])
+    def admin_circuit_breaker() -> tuple[Any, int]:
+        """GET /admin/circuit-breaker - Circuit breaker status."""
+        from app.repositories.resilient_repository import ResilientRepository
+
+        repo = rate_limiter.repository
+        if isinstance(repo, ResilientRepository):
+            return jsonify(repo.circuit_breaker.get_status()), 200
+        return jsonify({"enabled": False, "state": "not_configured"}), 200
+
+    @app.route("/admin/quotas", methods=["GET"])
+    def admin_quotas() -> tuple[Any, int]:
+        """GET /admin/quotas - Quota pool status."""
+        quota_manager = current_app.config.get("QUOTA_MANAGER")
+        if quota_manager is None:
+            return jsonify({"enabled": False}), 200
+        return jsonify(quota_manager.get_all_pools()), 200
+
+    @app.route("/admin/coalescing", methods=["GET"])
+    def admin_coalescing() -> tuple[Any, int]:
+        """GET /admin/coalescing - Request coalescing stats."""
+        coalescer = current_app.config.get("COALESCER")
+        if coalescer is None:
+            return jsonify({"enabled": False}), 200
+        return jsonify(coalescer.get_stats()), 200
+
+    @app.route("/admin/weights", methods=["GET"])
+    def admin_weights() -> tuple[Any, int]:
+        """GET /admin/weights - Weighted operation config."""
+        weighted = current_app.config.get("WEIGHTED")
+        if weighted is None:
+            return jsonify({"enabled": False}), 200
+        return jsonify(weighted.get_config()), 200

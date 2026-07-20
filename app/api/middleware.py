@@ -101,7 +101,9 @@ def require_rate_limit(
             if not client_id:
                 return jsonify({"error": "Authentication required"}), 401
 
-            result = rate_limiter.check_rate_limit(client_id, endpoint_name)
+            result = rate_limiter.check_rate_limit(
+                client_id, endpoint_name, method=request.method
+            )
             g.rate_limit_result = result
 
             if not result.allowed:

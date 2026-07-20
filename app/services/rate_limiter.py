@@ -4,22 +4,32 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from app.algorithms.base import RateLimitAlgorithm, RateLimitResult
 from app.config.settings import ClientConfig
 from app.logging.structured import get_logger
 from app.repositories.base import RateLimitRepository
 
+if TYPE_CHECKING:
+    from app.services.adaptive import AdaptiveRateLimiter
+    from app.services.coalescing import RequestCoalescer
+    from app.services.quota_sharing import QuotaManager
+    from app.services.weighted import WeightedRateLimiter
+
 
 class RateLimiterService:
     """Core rate limiting service.
 
     Orchestrates the rate limiting process by:
-    1. Looking up client configuration
-    2. Selecting the appropriate algorithm
-    3. Checking the rate limit via the repository
-    4. Recording metrics
+    1. Checking request coalescing cache
+    2. Applying weighted operation cost
+    3. Applying adaptive load multiplier
+    4. Checking shared quota pool
+    5. Looking up client configuration
+    6. Selecting the appropriate algorithm
+    7. Checking the rate limit via the repository
+    8. Recording metrics
     """
 
     def __init__(
@@ -27,6 +37,10 @@ class RateLimiterService:
         repository: RateLimitRepository,
         algorithms: dict[str, RateLimitAlgorithm],
         clients: dict[str, ClientConfig],
+        adaptive: AdaptiveRateLimiter | None = None,
+        weighted: WeightedRateLimiter | None = None,
+        coalescer: RequestCoalescer | None = None,
+        quota_manager: QuotaManager | None = None,
     ) -> None:
         """Initialize the rate limiter service.
 
@@ -34,19 +48,30 @@ class RateLimiterService:
             repository: Storage backend for rate limit state.
             algorithms: Mapping of endpoint -> algorithm instance.
             clients: Mapping of client_id -> client configuration.
+            adaptive: Optional adaptive rate limiter for load-based adjustment.
+            weighted: Optional weighted rate limiter for operation costs.
+            coalescer: Optional request coalescer for deduplication.
+            quota_manager: Optional quota manager for shared pools.
         """
         self._repository = repository
         self._algorithms = algorithms
         self._clients = clients
+        self._adaptive = adaptive
+        self._weighted = weighted
+        self._coalescer = coalescer
+        self._quota_manager = quota_manager
         self._logger = get_logger()
         self._metrics = RateLimiterMetrics()
 
-    def check_rate_limit(self, client_id: str, endpoint: str) -> RateLimitResult:
+    def check_rate_limit(
+        self, client_id: str, endpoint: str, method: str = "GET"
+    ) -> RateLimitResult:
         """Check if a request should be allowed.
 
         Args:
             client_id: The authenticated client making the request.
             endpoint: The endpoint being accessed (e.g., 'foo', 'bar').
+            method: HTTP method (for weighted operations).
 
         Returns:
             RateLimitResult indicating whether the request is allowed.
@@ -55,6 +80,34 @@ class RateLimiterService:
             ValueError: If endpoint has no configured algorithm or client has no config.
         """
         start_time = time.time()
+
+        # 1. Check coalescing cache
+        if self._coalescer:
+            cached = self._coalescer.get_cached(client_id, endpoint)
+            if cached is not None:
+                self._metrics.record_request(client_id, endpoint, cached.allowed)
+                return cached
+
+        # 2. Get operation weight
+        cost = 1
+        if self._weighted:
+            cost = self._weighted.get_cost(endpoint, method)
+
+        # 3. Check shared quota pool
+        if self._quota_manager:
+            pool_allowed, pool_remaining = self._quota_manager.check_pool_quota(
+                client_id, cost
+            )
+            if not pool_allowed:
+                result = RateLimitResult(
+                    allowed=False,
+                    limit=0,
+                    remaining=0,
+                    reset_at=time.time() + 60,
+                    current_count=0,
+                )
+                self._metrics.record_request(client_id, endpoint, False)
+                return result
 
         algorithm = self._algorithms.get(endpoint)
         if algorithm is None:
@@ -70,17 +123,31 @@ class RateLimiterService:
                 f"No endpoint configuration for client={client_id}, endpoint={endpoint}"
             )
 
+        # 4. Apply adaptive multiplier to the limit
+        effective_limit = endpoint_config.limit
+        if self._adaptive:
+            effective_limit = self._adaptive.get_effective_limit(endpoint_config.limit)
+
+        # 5. Run the rate limit algorithm
         result = algorithm.allow_request(
             repository=self._repository,
             client_id=client_id,
             endpoint=endpoint,
-            limit=endpoint_config.limit,
+            limit=effective_limit,
             window=endpoint_config.window,
         )
 
         latency_ms = (time.time() - start_time) * 1000
 
-        # Record metrics
+        # 6. Record adaptive metrics
+        if self._adaptive:
+            self._adaptive.record_request_end(latency_ms)
+
+        # 7. Cache result for coalescing
+        if self._coalescer:
+            self._coalescer.cache_result(client_id, endpoint, result)
+
+        # 8. Record metrics
         self._metrics.record_request(client_id, endpoint, result.allowed)
 
         # Structured logging
@@ -92,6 +159,8 @@ class RateLimiterService:
                 "algorithm": algorithm.name,
                 "decision": "allowed" if result.allowed else "rejected",
                 "remaining": result.remaining,
+                "effective_limit": effective_limit,
+                "cost": cost,
                 "latency_ms": round(latency_ms, 3),
             },
         )
