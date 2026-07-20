@@ -38,6 +38,9 @@ htmlcov/
 .coverage.*
 coverage.xml
 
+# Documentation (local only)
+docs/
+
 # mypy
 .mypy_cache/
 

@@ -8,6 +8,8 @@ from unittest.mock import patch
 import pytest
 
 from app.algorithms.fixed_window import FixedWindowAlgorithm
+from app.algorithms.gcra import GCRAAlgorithm
+from app.algorithms.leaky_bucket import LeakyBucketAlgorithm
 from app.algorithms.sliding_window_counter import SlidingWindowCounterAlgorithm
 from app.algorithms.sliding_window_log import SlidingWindowLogAlgorithm
 from app.algorithms.token_bucket import TokenBucketAlgorithm
@@ -295,3 +297,226 @@ class TestTokenBucketAlgorithm:
             result = self.algo.allow_request(self.repo, "client-1", "foo", limit=10, window=60)
             # Should have max tokens (capped at limit)
             assert result.remaining <= 10
+
+
+class TestLeakyBucketAlgorithm:
+    """Tests for Leaky Bucket algorithm.
+
+    Leaky Bucket enforces a constant drain rate. The bucket fills with
+    incoming requests and leaks at a fixed rate. Overflow means rejection.
+    """
+
+    def setup_method(self) -> None:
+        """Set up test fixtures."""
+        self.algo = LeakyBucketAlgorithm()
+        self.repo = MemoryRepository()
+
+    def test_name(self) -> None:
+        """Algorithm reports correct name."""
+        assert self.algo.name == "leaky_bucket"
+
+    def test_first_request_allowed(self) -> None:
+        """First request should always be allowed."""
+        result = self.algo.allow_request(self.repo, "client-1", "foo", limit=10, window=60)
+        assert result.allowed is True
+        assert result.remaining == 9
+        assert result.current_count == 1
+
+    def test_requests_within_capacity(self) -> None:
+        """Requests within bucket capacity should all be allowed."""
+        base_time = 1000.0
+        with patch("time.time", return_value=base_time):
+            for i in range(10):
+                result = self.algo.allow_request(self.repo, "client-1", "foo", limit=10, window=60)
+                assert result.allowed is True
+
+    def test_overflow_rejected(self) -> None:
+        """Requests exceeding bucket capacity are rejected."""
+        base_time = 1000.0
+        with patch("time.time", return_value=base_time):
+            for _ in range(10):
+                self.algo.allow_request(self.repo, "client-1", "foo", limit=10, window=60)
+
+            result = self.algo.allow_request(self.repo, "client-1", "foo", limit=10, window=60)
+            assert result.allowed is False
+            assert result.remaining == 0
+
+    def test_drain_allows_new_requests(self) -> None:
+        """After draining, new requests are allowed."""
+        base_time = 1000.0
+
+        # Fill the bucket
+        with patch("time.time", return_value=base_time):
+            for _ in range(10):
+                self.algo.allow_request(self.repo, "client-1", "foo", limit=10, window=60)
+
+        # Wait enough time for bucket to drain significantly
+        # drain_rate = 10/60 per second, so 6 seconds drains 1 request
+        with patch("time.time", return_value=base_time + 6):
+            result = self.algo.allow_request(self.repo, "client-1", "foo", limit=10, window=60)
+            assert result.allowed is True
+
+    def test_constant_rate_enforcement(self) -> None:
+        """Leaky bucket enforces constant drain rate."""
+        base_time = 1000.0
+
+        # Fill bucket to capacity
+        with patch("time.time", return_value=base_time):
+            for _ in range(10):
+                self.algo.allow_request(self.repo, "client-1", "foo", limit=10, window=60)
+
+        # Very short time (not enough to drain 1 request)
+        # 10/60 = 0.167 req/sec, so 1 sec drains 0.167 requests
+        with patch("time.time", return_value=base_time + 1):
+            result = self.algo.allow_request(self.repo, "client-1", "foo", limit=10, window=60)
+            assert result.allowed is False
+
+    def test_client_isolation(self) -> None:
+        """Different clients have independent buckets."""
+        base_time = 1000.0
+        with patch("time.time", return_value=base_time):
+            # Fill client-1
+            for _ in range(10):
+                self.algo.allow_request(self.repo, "client-1", "foo", limit=10, window=60)
+
+            # client-2 should still work
+            result = self.algo.allow_request(self.repo, "client-2", "foo", limit=10, window=60)
+            assert result.allowed is True
+
+    def test_limit_result_metadata(self) -> None:
+        """Result contains correct metadata."""
+        result = self.algo.allow_request(self.repo, "client-1", "foo", limit=5, window=30)
+        assert result.limit == 5
+        assert result.allowed is True
+        assert result.current_count == 1
+
+
+class TestGCRAAlgorithm:
+    """Tests for Generic Cell Rate Algorithm (GCRA).
+
+    GCRA uses a single timestamp (Theoretical Arrival Time) per key to
+    enforce rate limits. It is mathematically equivalent to token bucket
+    but more memory-efficient and atomic-friendly.
+    """
+
+    def setup_method(self) -> None:
+        """Set up test fixtures."""
+        self.algo = GCRAAlgorithm()
+        self.repo = MemoryRepository()
+
+    def test_name(self) -> None:
+        """Algorithm reports correct name."""
+        assert self.algo.name == "gcra"
+
+    def test_first_request_allowed(self) -> None:
+        """First request should always be allowed."""
+        result = self.algo.allow_request(self.repo, "client-1", "foo", limit=10, window=60)
+        assert result.allowed is True
+        assert result.current_count == 1
+
+    def test_burst_within_limit(self) -> None:
+        """Burst of requests within limit should all be allowed."""
+        base_time = 1000.0
+        with patch("time.time", return_value=base_time):
+            for i in range(10):
+                result = self.algo.allow_request(self.repo, "client-1", "foo", limit=10, window=60)
+                assert result.allowed is True
+
+    def test_burst_exceeds_limit(self) -> None:
+        """Request exceeding limit is rejected."""
+        base_time = 1000.0
+        with patch("time.time", return_value=base_time):
+            for _ in range(10):
+                self.algo.allow_request(self.repo, "client-1", "foo", limit=10, window=60)
+
+            result = self.algo.allow_request(self.repo, "client-1", "foo", limit=10, window=60)
+            assert result.allowed is False
+            assert result.remaining == 0
+
+    def test_recovery_after_wait(self) -> None:
+        """After waiting, requests are allowed again."""
+        base_time = 1000.0
+
+        # Exhaust limit
+        with patch("time.time", return_value=base_time):
+            for _ in range(10):
+                self.algo.allow_request(self.repo, "client-1", "foo", limit=10, window=60)
+
+        # emission_interval = 60/10 = 6 seconds per request
+        # Wait for one emission interval
+        with patch("time.time", return_value=base_time + 6):
+            result = self.algo.allow_request(self.repo, "client-1", "foo", limit=10, window=60)
+            assert result.allowed is True
+
+    def test_reject_gives_retry_after(self) -> None:
+        """Rejected requests have meaningful reset_at."""
+        base_time = 1000.0
+
+        with patch("time.time", return_value=base_time):
+            for _ in range(10):
+                self.algo.allow_request(self.repo, "client-1", "foo", limit=10, window=60)
+
+            result = self.algo.allow_request(self.repo, "client-1", "foo", limit=10, window=60)
+            assert result.allowed is False
+            assert result.reset_at > base_time
+
+    def test_single_timestamp_efficiency(self) -> None:
+        """GCRA only stores a single value per key (via token bucket store)."""
+        base_time = 1000.0
+        with patch("time.time", return_value=base_time):
+            self.algo.allow_request(self.repo, "client-1", "foo", limit=10, window=60)
+
+        # Verify only one key used in token bucket store
+        key = "client-1:foo:gcra"
+        state = self.repo.get_token_bucket(key)
+        assert state is not None
+        tat, _ = state
+        assert tat > base_time  # TAT should be in the future
+
+    def test_client_isolation(self) -> None:
+        """Different clients have independent TAT values."""
+        base_time = 1000.0
+        with patch("time.time", return_value=base_time):
+            # Exhaust client-1
+            for _ in range(10):
+                self.algo.allow_request(self.repo, "client-1", "foo", limit=10, window=60)
+
+            # client-2 should still work
+            result = self.algo.allow_request(self.repo, "client-2", "foo", limit=10, window=60)
+            assert result.allowed is True
+
+    def test_smooth_rate_limiting(self) -> None:
+        """GCRA allows exactly one request per emission interval."""
+        base_time = 1000.0
+        # emission_interval = 60/10 = 6 sec
+
+        # Exhaust burst capacity
+        with patch("time.time", return_value=base_time):
+            for _ in range(10):
+                self.algo.allow_request(self.repo, "client-1", "foo", limit=10, window=60)
+
+        # 3 seconds later (less than emission interval): reject
+        with patch("time.time", return_value=base_time + 3):
+            result = self.algo.allow_request(self.repo, "client-1", "foo", limit=10, window=60)
+            assert result.allowed is False
+
+        # 6 seconds later (one emission interval): allow
+        with patch("time.time", return_value=base_time + 6):
+            result = self.algo.allow_request(self.repo, "client-1", "foo", limit=10, window=60)
+            assert result.allowed is True
+
+    def test_full_recovery(self) -> None:
+        """After full window passes, all capacity is restored."""
+        base_time = 1000.0
+
+        # Exhaust limit
+        with patch("time.time", return_value=base_time):
+            for _ in range(10):
+                self.algo.allow_request(self.repo, "client-1", "foo", limit=10, window=60)
+
+        # Wait full window
+        with patch("time.time", return_value=base_time + 60):
+            # Should be able to burst again
+            for _ in range(10):
+                result = self.algo.allow_request(self.repo, "client-1", "foo", limit=10, window=60)
+                assert result.allowed is True

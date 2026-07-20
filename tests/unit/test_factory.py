@@ -6,6 +6,8 @@ import pytest
 
 from app.algorithms.factory import AlgorithmFactory
 from app.algorithms.fixed_window import FixedWindowAlgorithm
+from app.algorithms.gcra import GCRAAlgorithm
+from app.algorithms.leaky_bucket import LeakyBucketAlgorithm
 from app.algorithms.sliding_window_counter import SlidingWindowCounterAlgorithm
 from app.algorithms.sliding_window_log import SlidingWindowLogAlgorithm
 from app.algorithms.token_bucket import TokenBucketAlgorithm
@@ -38,6 +40,16 @@ class TestAlgorithmFactory:
         algo = AlgorithmFactory.create(AlgorithmType.TOKEN_BUCKET)
         assert isinstance(algo, TokenBucketAlgorithm)
 
+    def test_create_leaky_bucket(self) -> None:
+        """Factory creates LeakyBucketAlgorithm."""
+        algo = AlgorithmFactory.create(AlgorithmType.LEAKY_BUCKET)
+        assert isinstance(algo, LeakyBucketAlgorithm)
+
+    def test_create_gcra(self) -> None:
+        """Factory creates GCRAAlgorithm."""
+        algo = AlgorithmFactory.create(AlgorithmType.GCRA)
+        assert isinstance(algo, GCRAAlgorithm)
+
     def test_available_algorithms(self) -> None:
         """All algorithms are listed."""
         available = AlgorithmFactory.available_algorithms()
@@ -45,6 +57,8 @@ class TestAlgorithmFactory:
         assert "sliding_window_log" in available
         assert "sliding_window_counter" in available
         assert "token_bucket" in available
+        assert "leaky_bucket" in available
+        assert "gcra" in available
 
 
 class TestRepositoryFactory:

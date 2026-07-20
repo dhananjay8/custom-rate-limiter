@@ -16,11 +16,11 @@ A **production-grade rate limiting framework** built with Python and Flask. Demo
 │                  Algorithm Layer (Strategy)                   │
 │  ┌────────────┐ ┌──────────────┐ ┌───────────────────────┐  │
 │  │Fixed Window│ │Sliding Window│ │Token Bucket            │  │
-│  │Counter     │ │Log           │ │                        │  │
+│  │Counter     │ │Log + Counter │ │                        │  │
 │  └────────────┘ └──────────────┘ └───────────────────────┘  │
-│  ┌────────────────────────┐                                  │
-│  │Sliding Window Counter  │                                  │
-│  └────────────────────────┘                                  │
+│  ┌────────────┐ ┌──────────────┐                             │
+│  │Leaky Bucket│ │GCRA (Stripe) │                             │
+│  └────────────┘ └──────────────┘                             │
 ├──────────────────────────────────────────────────────────────┤
 │                Repository Layer (Abstraction)                 │
 │  ┌──────────────────┐  ┌───────────────────────────────┐    │
@@ -31,7 +31,7 @@ A **production-grade rate limiting framework** built with Python and Flask. Demo
 
 ## Features
 
-- **4 Rate Limiting Algorithms**: Fixed Window, Sliding Window Log, Sliding Window Counter, Token Bucket
+- **6 Rate Limiting Algorithms**: Fixed Window, Sliding Window Log/Counter, Token Bucket, Leaky Bucket, GCRA
 - **2 Storage Backends**: In-Memory (thread-safe), SQLite (WAL mode)
 - **Configuration-driven**: Switch algorithms or storage via environment variables
 - **Per-client, per-endpoint limits**: Different clients get different quotas
@@ -112,7 +112,7 @@ All configuration is environment-driven:
 
 ```env
 RATE_LIMIT_STORAGE=memory          # memory | sqlite
-FOO_ALGORITHM=fixed_window         # fixed_window | sliding_window_log | token_bucket | sliding_window_counter
+FOO_ALGORITHM=fixed_window         # fixed_window | sliding_window_log | sliding_window_counter | token_bucket | leaky_bucket | gcra
 BAR_ALGORITHM=sliding_window_log
 
 CLIENT_BASIC_FOO_LIMIT=10
@@ -161,6 +161,19 @@ No code changes required. Restart the application.
 - **Complexity**: O(1) time and space
 - **Trade-off**: Allows controlled bursts
 - **Best for**: APIs that need to allow burst traffic (AWS, NGINX, Envoy)
+
+### Leaky Bucket
+- **Complexity**: O(1) time and space
+- **Trade-off**: Strict constant drain rate, no burst allowance
+- **Best for**: Traffic shaping, network QoS, NGINX rate limiting (ngx_http_limit_req)
+- **Used by**: NGINX, Cisco IOS, Telecom (ITU-T I.371)
+
+### GCRA (Generic Cell Rate Algorithm)
+- **Complexity**: O(1) time and space, single timestamp per key
+- **Trade-off**: Most memory-efficient; atomic-friendly (single CAS operation)
+- **Best for**: Distributed rate limiting with Redis, high-scale APIs
+- **Used by**: Stripe, Shopify, GitHub, ATM Networks (ITU-T I.371)
+- **Also known as**: Virtual Scheduling Algorithm, Continuous Token Bucket
 
 ## Running Tests
 

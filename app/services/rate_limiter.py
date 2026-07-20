@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import threading
 import time
 from typing import Any
 
 from app.algorithms.base import RateLimitAlgorithm, RateLimitResult
-from app.config.settings import ClientConfig, Settings
+from app.config.settings import ClientConfig
 from app.logging.structured import get_logger
 from app.repositories.base import RateLimitRepository
 
@@ -113,8 +114,6 @@ class RateLimiterMetrics:
 
     def __init__(self) -> None:
         """Initialize metrics counters."""
-        import threading
-
         self._lock = threading.Lock()
         self._total_requests: int = 0
         self._allowed_requests: int = 0

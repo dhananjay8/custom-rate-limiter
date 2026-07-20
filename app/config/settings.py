@@ -24,6 +24,8 @@ class AlgorithmType(str, Enum):
     SLIDING_WINDOW_LOG = "sliding_window_log"
     SLIDING_WINDOW_COUNTER = "sliding_window_counter"
     TOKEN_BUCKET = "token_bucket"
+    LEAKY_BUCKET = "leaky_bucket"
+    GCRA = "gcra"
 
 
 class ClientEndpointConfig(BaseModel):
@@ -76,9 +78,7 @@ class Settings(BaseSettings):
     client_premium_bar_limit: int = Field(default=250, gt=0)
     client_premium_bar_window: int = Field(default=60, gt=0)
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
     def get_algorithm_for_endpoint(self, endpoint: str) -> AlgorithmType:
         """Get the configured algorithm for an endpoint."""

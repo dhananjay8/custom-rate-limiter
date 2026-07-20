@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from app.algorithms.base import RateLimitAlgorithm
 from app.algorithms.fixed_window import FixedWindowAlgorithm
+from app.algorithms.gcra import GCRAAlgorithm
+from app.algorithms.leaky_bucket import LeakyBucketAlgorithm
 from app.algorithms.sliding_window_counter import SlidingWindowCounterAlgorithm
 from app.algorithms.sliding_window_log import SlidingWindowLogAlgorithm
 from app.algorithms.token_bucket import TokenBucketAlgorithm
@@ -21,6 +23,8 @@ class AlgorithmFactory:
         AlgorithmType.SLIDING_WINDOW_LOG: SlidingWindowLogAlgorithm,
         AlgorithmType.SLIDING_WINDOW_COUNTER: SlidingWindowCounterAlgorithm,
         AlgorithmType.TOKEN_BUCKET: TokenBucketAlgorithm,
+        AlgorithmType.LEAKY_BUCKET: LeakyBucketAlgorithm,
+        AlgorithmType.GCRA: GCRAAlgorithm,
     }
 
     @classmethod
