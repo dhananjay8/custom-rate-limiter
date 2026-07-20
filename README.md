@@ -1,55 +1,6 @@
 # Custom Rate Limiter
 
-A **production-grade rate limiting framework** built with Python and Flask. Demonstrates clean architecture, extensibility, and production readiness with pluggable algorithms and storage backends.
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                      Flask Application                        │
-├──────────────┬──────────────┬────────────────────────────────┤
-│  Middleware  │    Routes    │        Error Handlers           │
-│  (Auth+RL)   │ /foo /bar    │                                │
-├──────────────┴──────────────┴────────────────────────────────┤
-│                   Rate Limiter Service                        │
-├──────────────────────────────────────────────────────────────┤
-│                  Algorithm Layer (Strategy)                   │
-│  ┌────────────┐ ┌──────────────┐ ┌───────────────────────┐  │
-│  │Fixed Window│ │Sliding Window│ │Token Bucket            │  │
-│  │Counter     │ │Log + Counter │ │                        │  │
-│  └────────────┘ └──────────────┘ └───────────────────────┘  │
-│  ┌────────────┐ ┌──────────────┐                             │
-│  │Leaky Bucket│ │GCRA (Stripe) │                             │
-│  └────────────┘ └──────────────┘                             │
-├──────────────────────────────────────────────────────────────┤
-│                Repository Layer (Abstraction)                 │
-│  ┌──────────────────┐  ┌───────────────────────────────┐    │
-│  │MemoryRepository   │  │SQLiteRepository                │    │
-│  └──────────────────┘  └───────────────────────────────┘    │
-└──────────────────────────────────────────────────────────────┘
-```
-
-## Features
-
-- **6 Rate Limiting Algorithms**: Fixed Window, Sliding Window Log/Counter, Token Bucket, Leaky Bucket, GCRA
-- **2 Storage Backends**: In-Memory (thread-safe), SQLite (WAL mode)
-- **Configuration-driven**: Switch algorithms or storage via environment variables
-- **Per-client, per-endpoint limits**: Different clients get different quotas
-- **Structured JSON logging**: Every decision is logged with context
-- **Metrics & monitoring**: Built-in `/health`, `/metrics`, `/admin/config`
-- **Thread-safe**: Proper locking for concurrent access
-- **Comprehensive tests**: Unit, integration, concurrency, edge cases
-
-## Design Patterns
-
-| Pattern | Where |
-|---------|-------|
-| Strategy | Algorithm selection |
-| Factory | Algorithm & Repository creation |
-| Repository | Storage abstraction |
-| Dependency Injection | Application wiring |
-| Chain of Responsibility | Auth → Rate Limit → Handler |
-| Template Method | Common algorithm interface |
+A **production-grade rate limiting framework** built with Python and Flask, featuring 6 industry-standard algorithms, 3 storage backends, adaptive limiting, circuit breaker resilience, and OpenAPI documentation.
 
 ## Quick Start
 
@@ -57,11 +8,11 @@ A **production-grade rate limiting framework** built with Python and Flask. Demo
 
 - Python 3.12+
 - pip or Poetry
+- Docker/Podman (optional, for containerized runs)
 
 ### Installation
 
 ```bash
-# Clone and enter project
 cd custom-rate-limiter
 
 # Create virtual environment
@@ -70,22 +21,66 @@ source .venv/bin/activate
 
 # Install dependencies
 pip install -r requirements-dev.txt
+
+# Copy environment config
+cp .env.example .env
 ```
 
-### Running the Application
+### Run Locally
 
 ```bash
-# Development
+# Development (auto-reload)
 python run.py
 
 # Production (Gunicorn)
 gunicorn --bind 0.0.0.0:5000 --workers 4 run:app
 ```
 
-### Docker
+### Run with Docker Compose (Redis backend)
 
 ```bash
 docker-compose up --build
+```
+
+This starts the app + Redis. The rate limiter uses Redis for distributed state.
+
+### Run with Podman (Memory backend, testing)
+
+```bash
+# Build test image
+podman build -t rate-limiter-test -f Containerfile.test .
+
+# Run all 202 tests
+podman run --rm rate-limiter-test
+
+# Run app (memory backend)
+podman build -t rate-limiter -f Dockerfile .
+podman run --rm -p 5050:5000 -e RATE_LIMIT_STORAGE=memory rate-limiter
+```
+
+## Testing the API
+
+```bash
+# Health check
+curl http://localhost:5000/health
+
+# Successful request (not throttled)
+curl -X GET http://localhost:5000/foo -H "Authorization: Bearer client-basic"
+# → 200 {"success": true}
+
+# After exhausting limit (throttled)
+curl -X GET http://localhost:5000/foo -H "Authorization: Bearer client-basic"
+# → 429 {"error": "rate limit exceeded"}
+
+# Different client with higher limits
+curl -X GET http://localhost:5000/foo -H "Authorization: Bearer client-premium"
+# → 200 {"success": true}
+
+# Bar endpoint (different algorithm)
+curl -X GET http://localhost:5000/bar -H "Authorization: Bearer client-basic"
+
+# Swagger UI
+open http://localhost:5000/docs
 ```
 
 ## API Endpoints
@@ -94,42 +89,58 @@ docker-compose up --build
 
 | Endpoint | Method | Auth | Description |
 |----------|--------|------|-------------|
-| `/foo` | GET | Bearer | Rate limited (Fixed Window by default) |
-| `/bar` | GET | Bearer | Rate limited (Sliding Window Log by default) |
+| `/foo` | GET | `Bearer <client-id>` | Rate limited (Fixed Window by default) |
+| `/bar` | GET | `Bearer <client-id>` | Rate limited (Sliding Window Log by default) |
 
-### Monitoring
+### Monitoring & Admin
 
-| Endpoint | Method | Auth | Description |
-|----------|--------|------|-------------|
-| `/health` | GET | None | Health check |
-| `/metrics` | GET | None | Request metrics |
-| `/admin/config` | GET | None | Current configuration |
-| `/admin/reset` | POST | None | Reset all state |
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Health check (storage, algorithms, circuit breaker) |
+| `/metrics` | GET | Request metrics per client/endpoint |
+| `/admin/config` | GET | Current configuration |
+| `/admin/reset` | POST | Reset all rate limit state |
+| `/admin/adaptive` | GET | Adaptive rate limiter status |
+| `/admin/circuit-breaker` | GET | Circuit breaker state |
+| `/admin/quotas` | GET | Quota pool usage |
+| `/admin/coalescing` | GET | Request coalescing stats |
+| `/admin/weights` | GET | Weighted operation config |
+| `/docs` | GET | Swagger UI |
+| `/openapi.json` | GET | OpenAPI 3.1 spec |
 
 ## Configuration
 
-All configuration is environment-driven:
+All configuration is via environment variables (see `.env.example`):
 
 ```env
-RATE_LIMIT_STORAGE=memory          # memory | sqlite
+RATE_LIMIT_STORAGE=memory          # memory | sqlite | redis
 FOO_ALGORITHM=fixed_window         # fixed_window | sliding_window_log | sliding_window_counter | token_bucket | leaky_bucket | gcra
 BAR_ALGORITHM=sliding_window_log
 
+# Per-client limits
 CLIENT_BASIC_FOO_LIMIT=10
 CLIENT_BASIC_FOO_WINDOW=60
 CLIENT_PREMIUM_FOO_LIMIT=100
 CLIENT_PREMIUM_FOO_WINDOW=60
+
+# Redis (when using redis backend)
+REDIS_URL=redis://localhost:6379/0
+
+# Advanced features
+CIRCUIT_BREAKER_ENABLED=true
+ADAPTIVE_ENABLED=true
+COALESCING_ENABLED=true
+FOO_GET_WEIGHT=1
+FOO_POST_WEIGHT=5
 ```
 
-### Switching Algorithms
+### Switching Algorithms (zero code change)
 
-To switch `/foo` from Fixed Window to Token Bucket:
-
-```env
-FOO_ALGORITHM=token_bucket
+```bash
+# Change /foo from Fixed Window to GCRA
+export FOO_ALGORITHM=gcra
+# Restart app
 ```
-
-No code changes required. Restart the application.
 
 ## Client Configuration
 
@@ -140,54 +151,19 @@ No code changes required. Restart the application.
 | client-premium | /foo | 100 req | 60s |
 | client-premium | /bar | 250 req | 60s |
 
-## Algorithms
-
-### Fixed Window Counter
-- **Complexity**: O(1) time and space
-- **Trade-off**: Can allow 2x burst at window boundaries
-- **Best for**: Simple, low-overhead rate limiting
-
-### Sliding Window Log
-- **Complexity**: O(n) space, O(log n) time
-- **Trade-off**: Higher memory, but precise
-- **Best for**: Accurate rate limiting without boundary issues
-
-### Sliding Window Counter
-- **Complexity**: O(1) time and space
-- **Trade-off**: Approximation of sliding window
-- **Best for**: Balance between accuracy and efficiency
-
-### Token Bucket
-- **Complexity**: O(1) time and space
-- **Trade-off**: Allows controlled bursts
-- **Best for**: APIs that need to allow burst traffic (AWS, NGINX, Envoy)
-
-### Leaky Bucket
-- **Complexity**: O(1) time and space
-- **Trade-off**: Strict constant drain rate, no burst allowance
-- **Best for**: Traffic shaping, network QoS, NGINX rate limiting (ngx_http_limit_req)
-- **Used by**: NGINX, Cisco IOS, Telecom (ITU-T I.371)
-
-### GCRA (Generic Cell Rate Algorithm)
-- **Complexity**: O(1) time and space, single timestamp per key
-- **Trade-off**: Most memory-efficient; atomic-friendly (single CAS operation)
-- **Best for**: Distributed rate limiting with Redis, high-scale APIs
-- **Used by**: Stripe, Shopify, GitHub, ATM Networks (ITU-T I.371)
-- **Also known as**: Virtual Scheduling Algorithm, Continuous Token Bucket
-
 ## Running Tests
 
 ```bash
-# All tests
+# All tests (202 tests, 87% coverage)
 pytest
 
-# With coverage
+# With coverage report
 pytest --cov=app --cov-report=html
 
-# Specific test categories
+# Specific categories
 pytest tests/unit/test_algorithms.py
-pytest tests/unit/test_api.py
-pytest tests/unit/test_concurrency.py
+pytest tests/unit/test_circuit_breaker.py
+pytest tests/unit/test_advanced_features.py
 pytest tests/integration/
 ```
 
@@ -202,76 +178,24 @@ python scripts/benchmark.py
 ```
 custom-rate-limiter/
 ├── app/
-│   ├── algorithms/          # Rate limiting algorithms (Strategy)
-│   │   ├── base.py          # Abstract base class
-│   │   ├── fixed_window.py
-│   │   ├── sliding_window_log.py
-│   │   ├── sliding_window_counter.py
-│   │   ├── token_bucket.py
-│   │   └── factory.py       # Algorithm factory
-│   ├── api/
-│   │   ├── routes.py        # API endpoint definitions
-│   │   └── middleware.py    # Auth + rate limit middleware
-│   ├── auth/
-│   │   └── bearer_auth.py   # Bearer token authentication
-│   ├── config/
-│   │   └── settings.py      # Pydantic Settings configuration
-│   ├── exceptions/          # Custom exception hierarchy
-│   ├── logging/
-│   │   └── structured.py    # JSON structured logging
-│   ├── repositories/        # Storage backends (Repository)
-│   │   ├── base.py          # Abstract repository interface
-│   │   ├── memory_repository.py
-│   │   ├── sqlite_repository.py
-│   │   └── factory.py       # Repository factory
-│   ├── services/
-│   │   ├── rate_limiter.py  # Core business logic + metrics
-│   │   └── metrics.py       # Application metrics
-│   └── factory.py           # Application factory (DI wiring)
-├── tests/
-│   ├── unit/
-│   │   ├── test_algorithms.py
-│   │   ├── test_repositories.py
-│   │   ├── test_auth.py
-│   │   ├── test_api.py
-│   │   ├── test_config.py
-│   │   ├── test_concurrency.py
-│   │   ├── test_edge_cases.py
-│   │   └── test_factory.py
-│   └── integration/
-│       └── test_full_flow.py
-├── scripts/
-│   └── benchmark.py
-├── docs/
-├── Dockerfile
-├── docker-compose.yml
-└── README.md
+│   ├── algorithms/           # 6 rate limiting algorithms (Strategy pattern)
+│   ├── api/                  # Routes, middleware, OpenAPI spec
+│   ├── auth/                 # Bearer token authentication
+│   ├── config/               # Pydantic Settings (env-driven)
+│   ├── repositories/         # Storage backends (Memory, SQLite, Redis)
+│   ├── resilience/           # Circuit breaker pattern
+│   ├── services/             # Rate limiter, adaptive, weighted, coalescing, quota
+│   └── factory.py            # Application factory (DI wiring)
+├── tests/                    # 202 tests (unit, integration, concurrency)
+├── scripts/                  # Benchmark, HTTP test scripts
+├── infra/azure/              # Azure deployment (Bicep, scripts)
+├── Dockerfile                # Production container
+├── Containerfile.test        # Test container
+├── docker-compose.yml        # App + Redis stack
+└── .env.example              # All configuration options
 ```
 
-## Design Decisions & Trade-offs
+## Further Documentation
 
-1. **In-process rate limiting**: Simple, no external dependencies. Trade-off: not distributed.
-2. **Thread locks**: Correct, simple. Trade-off: contention under very high load.
-3. **SQLite with WAL**: Good concurrent read perf. Trade-off: single-writer bottleneck.
-4. **Pydantic Settings**: Type-safe config. Trade-off: slightly more complex than raw env vars.
-5. **Factory pattern**: Easy to extend. Trade-off: more indirection.
-
-## Future Improvements
-
-- **Redis Repository**: For distributed rate limiting across multiple pods
-- **Lua Scripts**: Atomic operations in Redis
-- **Prometheus Metrics**: Production monitoring integration
-- **OpenAPI/Swagger**: Auto-generated API docs
-- **Distributed rate limiting**: Consistent hashing, Redis Cluster
-- **Circuit breaker**: For storage backend failures
-- **GCRA Algorithm**: Telecom-grade rate limiting
-- **Kubernetes deployment**: Horizontal scaling with shared state
-- **API Gateway integration**: Envoy, Kong, or Istio
-
-## Interview Discussion Points
-
-- **How would you replace SQLite with Redis?** → Implement `RedisRepository` with same interface
-- **How would you scale across pods?** → Redis as shared state, or consistent hashing
-- **How would you implement distributed rate limiting?** → Redis Lua scripts for atomicity
-- **How would you add Token Bucket?** → Already implemented, just change config
-- **How would you integrate with an API Gateway?** → Adapter pattern, same algorithm layer
+- **[crl-architecture.md](crl-architecture.md)** — In-depth architecture, algorithms, design patterns
+- **[infra/azure/README.md](infra/azure/README.md)** — Azure deployment guide
