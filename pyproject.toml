@@ -1,0 +1,49 @@
+[tool.poetry]
+name = "custom-rate-limiter"
+version = "1.0.0"
+description = "Production-grade custom rate limiting framework with pluggable algorithms and storage backends"
+authors = ["Dhaval Patil"]
+readme = "README.md"
+packages = [{include = "app"}]
+
+[tool.poetry.dependencies]
+python = "^3.12"
+flask = "^3.0.0"
+pydantic = "^2.5.0"
+pydantic-settings = "^2.1.0"
+sqlalchemy = "^2.0.23"
+gunicorn = "^21.2.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4.3"
+pytest-cov = "^4.1.0"
+pytest-flask = "^1.3.0"
+black = "^23.12.0"
+isort = "^5.13.0"
+mypy = "^1.7.0"
+pre-commit = "^3.6.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.black]
+line-length = 100
+target-version = ["py312"]
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"

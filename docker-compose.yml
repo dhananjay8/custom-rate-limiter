@@ -1,0 +1,35 @@
+version: "3.8"
+
+services:
+  rate-limiter:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "5000:5000"
+    environment:
+      - RATE_LIMIT_STORAGE=memory
+      - LOG_LEVEL=INFO
+      - APP_ENV=production
+      - FOO_ALGORITHM=fixed_window
+      - BAR_ALGORITHM=sliding_window_log
+      - CLIENT_BASIC_FOO_LIMIT=10
+      - CLIENT_BASIC_FOO_WINDOW=60
+      - CLIENT_BASIC_BAR_LIMIT=20
+      - CLIENT_BASIC_BAR_WINDOW=60
+      - CLIENT_PREMIUM_FOO_LIMIT=100
+      - CLIENT_PREMIUM_FOO_WINDOW=60
+      - CLIENT_PREMIUM_BAR_LIMIT=250
+      - CLIENT_PREMIUM_BAR_WINDOW=60
+    volumes:
+      - rate_limiter_data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  rate_limiter_data:
