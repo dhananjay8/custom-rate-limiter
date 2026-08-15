@@ -68,6 +68,11 @@ curl http://localhost:5000/health
 curl -X GET http://localhost:5000/foo -H "Authorization: Bearer client-basic"
 # → 200 {"success": true}
 
+# Weighted request (consumes 3 units of quota)
+curl -X GET http://localhost:5000/foo \
+  -H "Authorization: Bearer client-basic" \
+  -H "X-Request-Weight: 3"
+
 # After exhausting limit (throttled)
 curl -X GET http://localhost:5000/foo -H "Authorization: Bearer client-basic"
 # → 429 {"error": "rate limit exceeded"}
@@ -90,7 +95,9 @@ open http://localhost:5000/docs
 | Endpoint | Method | Auth | Description |
 |----------|--------|------|-------------|
 | `/foo` | GET | `Bearer <client-id>` | Rate limited (Fixed Window by default) |
+| `/foo` | POST | `Bearer <client-id>` | Write operation (cost = `FOO_POST_WEIGHT`, default 5) |
 | `/bar` | GET | `Bearer <client-id>` | Rate limited (Sliding Window Log by default) |
+| `/bar` | POST | `Bearer <client-id>` | Write operation (cost = `BAR_POST_WEIGHT`, default 3) |
 
 ### Monitoring & Admin
 
@@ -98,8 +105,11 @@ open http://localhost:5000/docs
 |----------|--------|-------------|
 | `/health` | GET | Health check (storage, algorithms, circuit breaker) |
 | `/metrics` | GET | Request metrics per client/endpoint |
-| `/admin/config` | GET | Current configuration |
+| `/metrics/prometheus` | GET | Prometheus exposition format for scraping |
+| `/admin/config` | GET | Current configuration (see `ADMIN_TOKEN` note below) |
+| `/admin/dry-run` | GET | Non-invasive diagnostics (config + storage + feature status) |
 | `/admin/reset` | POST | Reset all rate limit state |
+| `/admin/config` | POST | Update and persist configuration (when dynamic config enabled) |
 | `/admin/adaptive` | GET | Adaptive rate limiter status |
 | `/admin/circuit-breaker` | GET | Circuit breaker state |
 | `/admin/quotas` | GET | Quota pool usage |
@@ -134,6 +144,72 @@ FOO_GET_WEIGHT=1
 FOO_POST_WEIGHT=5
 ```
 
+### Write operations
+
+`POST /foo` and `POST /bar` are rate-limited write endpoints. They consume
+`FOO_POST_WEIGHT` (default `5`) and `BAR_POST_WEIGHT` (default `3`) units per
+request, configurable via `.env` or environment variables.
+
+```bash
+curl -X POST http://localhost:5000/foo \
+  -H "Authorization: Bearer client-basic" \
+  -H "X-Request-Weight: 2"
+# → 200 {"success": true}
+```
+
+### Shadow mode
+
+When `SHADOW_MODE_ENABLED=true`, you can preview rate limit decisions without
+blocking traffic by passing `X-Shadow-Mode: true` on any rate-limited
+endpoint. The response returns the decision and remaining quota but does not
+mutate the live rate limit state.
+
+```bash
+curl -X GET http://localhost:5000/foo \
+  -H "Authorization: Bearer client-basic" \
+  -H "X-Shadow-Mode: true"
+# → 200 {"success": true, "shadow": true, "decision": "allowed", ...}
+```
+
+### Optional request weight override
+
+For authenticated rate-limited endpoints (`/foo`, `/bar`), you can pass
+`X-Request-Weight: <int>` to override the default endpoint/method weight
+for that request.
+
+- Invalid header values return `400`.
+- Minimum accepted value is `1`.
+
+### Dynamic configuration (runtime, persisted)
+
+When `DYNAMIC_CONFIG_ENABLED=true`, you can update client limits, endpoint
+algorithms, and method weights at runtime via `POST /admin/config`. The update
+is persisted to `DYNAMIC_CONFIG_PATH` and re-applied on the next startup.
+
+```bash
+curl -X POST http://localhost:5000/admin/config \
+  -H "Content-Type: application/json" \
+  -d '{
+    "clients": {
+      "client-basic": {
+        "foo": {"limit": 5, "window": 60}
+      }
+    },
+    "algorithms": {
+      "foo": "token_bucket"
+    },
+    "weights": {
+      "foo": {"default_cost": 1, "method_costs": {"GET": 1, "POST": 2}}
+    }
+  }'
+```
+
+### Admin route authentication
+
+If `ADMIN_TOKEN` is set, all `/admin/*` endpoints require
+`Authorization: Bearer <admin-token>`. When `ADMIN_TOKEN` is not set,
+admin routes remain public (development convenience).
+
 ### Switching Algorithms (zero code change)
 
 ```bash
@@ -154,6 +230,9 @@ export FOO_ALGORITHM=gcra
 ## Running Tests
 
 ```bash
+# Logical dry-run diagnostics (no external infra mutation)
+python scripts/dry_run.py
+
 # All tests (202 tests, 87% coverage)
 pytest
 

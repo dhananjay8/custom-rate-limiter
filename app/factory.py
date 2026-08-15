@@ -17,6 +17,7 @@ from app.logging.structured import setup_logging
 from app.repositories.factory import RepositoryFactory
 from app.services.adaptive import AdaptiveRateLimiter
 from app.services.coalescing import RequestCoalescer
+from app.services.dynamic_config import DynamicConfigManager
 from app.services.quota_sharing import QuotaManager
 from app.services.rate_limiter import RateLimiterService
 from app.services.weighted import WeightedRateLimiter
@@ -116,15 +117,31 @@ def create_app(settings: Settings | None = None) -> Flask:
         quota_manager=quota_manager,
     )
 
+    # 10. Create dynamic config manager (loads persisted config if enabled)
+    dynamic_config_path = settings.dynamic_config_path if settings.dynamic_config_enabled else None
+    dynamic_config = DynamicConfigManager(
+        file_path=dynamic_config_path,
+        rate_limiter=rate_limiter,
+        weighted=weighted,
+    )
+
     # Store services in app config for route access
     app.config["ADAPTIVE"] = adaptive
     app.config["WEIGHTED"] = weighted
     app.config["COALESCER"] = coalescer
     app.config["QUOTA_MANAGER"] = quota_manager
+    app.config["ADMIN_TOKEN"] = settings.admin_token
+    app.config["DYNAMIC_CONFIG"] = dynamic_config
 
     # --- Register middleware and routes ---
     register_middleware(app, authenticator, rate_limiter)
-    create_routes(app, authenticator, rate_limiter)
+    create_routes(
+        app,
+        authenticator,
+        rate_limiter,
+        admin_token=settings.admin_token,
+        dynamic_config=dynamic_config,
+    )
     register_openapi_routes(app)
 
     # --- Error handlers ---

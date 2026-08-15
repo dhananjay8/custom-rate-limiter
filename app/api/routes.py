@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
-from flask import Blueprint, Flask, current_app, jsonify
+from flask import Flask, current_app, jsonify, request
 
-from app.api.middleware import require_auth, require_rate_limit
+from app.api.middleware import require_admin_auth, require_auth, require_rate_limit
 from app.auth.bearer_auth import BearerAuthenticator
+from app.services.dynamic_config import DynamicConfigManager
 from app.services.rate_limiter import RateLimiterService
 
 
@@ -15,6 +17,8 @@ def create_routes(
     app: Flask,
     authenticator: BearerAuthenticator,
     rate_limiter: RateLimiterService,
+    admin_token: str | None = None,
+    dynamic_config: DynamicConfigManager | None = None,
 ) -> None:
     """Register all API routes on the Flask application.
 
@@ -22,8 +26,11 @@ def create_routes(
         app: Flask application instance.
         authenticator: Bearer token authenticator.
         rate_limiter: Rate limiter service instance.
+        admin_token: Optional bearer token for admin endpoints.
+        dynamic_config: Optional dynamic configuration manager.
     """
     auth = require_auth(authenticator)
+    admin_auth = require_admin_auth(admin_token)
 
     # --- Rate Limited Endpoints ---
 
@@ -41,6 +48,20 @@ def create_routes(
         """GET /bar - Rate limited endpoint using configured algorithm."""
         return jsonify({"success": True}), 200
 
+    @app.route("/foo", methods=["POST"])
+    @auth
+    @require_rate_limit(rate_limiter, "foo")
+    def post_foo() -> tuple[Any, int]:
+        """POST /foo - Write operation with higher default weight."""
+        return jsonify({"success": True}), 200
+
+    @app.route("/bar", methods=["POST"])
+    @auth
+    @require_rate_limit(rate_limiter, "bar")
+    def post_bar() -> tuple[Any, int]:
+        """POST /bar - Write operation with higher default weight."""
+        return jsonify({"success": True}), 200
+
     # --- Health & Monitoring ---
 
     @app.route("/health", methods=["GET"])
@@ -48,9 +69,12 @@ def create_routes(
         """GET /health - Application health check."""
         settings = current_app.config["SETTINGS"]
         storage_healthy = rate_limiter.repository.health_check()
+        dry_run = rate_limiter.run_logical_dry_run()
 
         status = "healthy" if storage_healthy else "degraded"
         http_status = 200 if storage_healthy else 503
+        started_at = app.config.get("APP_START_TIME", time.time())
+        uptime_seconds = round(max(0.0, time.time() - started_at), 2)
 
         return jsonify({
             "status": status,
@@ -60,9 +84,11 @@ def create_routes(
             },
             "algorithms": {
                 endpoint: algo.name
-                for endpoint, algo in rate_limiter._algorithms.items()
+                for endpoint, algo in rate_limiter.algorithms.items()
             },
-            "uptime_seconds": round(app.config.get("APP_START_TIME", 0), 2),
+            "circuit_breaker": dry_run["features"]["circuit_breaker"],
+            "adaptive": dry_run["features"]["adaptive"],
+            "uptime_seconds": uptime_seconds,
         }), http_status
 
     @app.route("/metrics", methods=["GET"])
@@ -70,16 +96,34 @@ def create_routes(
         """GET /metrics - Application metrics."""
         return jsonify(rate_limiter.metrics.get_metrics()), 200
 
-    @app.route("/admin/config", methods=["GET"])
+    @app.route("/metrics/prometheus", methods=["GET"])
+    def prometheus_metrics() -> tuple[str, int]:
+        """GET /metrics/prometheus - Prometheus-compatible metrics."""
+        return rate_limiter.metrics.get_prometheus_metrics(), 200, {"Content-Type": "text/plain; version=0.0.4; charset=utf-8"}
+
+    @app.route("/admin/config", methods=["GET", "POST"])
+    @admin_auth
     def admin_config() -> tuple[Any, int]:
-        """GET /admin/config - Current configuration."""
+        """GET/POST /admin/config - View or update current configuration."""
+        if request.method == "POST":
+            settings = current_app.config["SETTINGS"]
+            if not settings.dynamic_config_enabled or dynamic_config is None:
+                return jsonify({"error": "dynamic configuration is not enabled"}), 503
+
+            data = request.get_json(silent=True) or {}
+            try:
+                current = dynamic_config.apply_update(data)
+                return jsonify({"status": "updated", "config": current}), 200
+            except (ValueError, KeyError, TypeError) as e:
+                return jsonify({"error": str(e)}), 400
+
         settings = current_app.config["SETTINGS"]
 
         return jsonify({
             "storage": settings.rate_limit_storage.value,
             "algorithms": {
                 endpoint: algo.name
-                for endpoint, algo in rate_limiter._algorithms.items()
+                for endpoint, algo in rate_limiter.algorithms.items()
             },
             "clients": {
                 client_id: {
@@ -88,12 +132,21 @@ def create_routes(
                         for ep, cfg in client_cfg.endpoints.items()
                     }
                 }
-                for client_id, client_cfg in rate_limiter._clients.items()
+                for client_id, client_cfg in rate_limiter.clients.items()
             },
             "environment": settings.app_env,
         }), 200
 
+    @app.route("/admin/dry-run", methods=["GET"])
+    @admin_auth
+    def admin_dry_run() -> tuple[Any, int]:
+        """GET /admin/dry-run - Non-invasive diagnostics for config and backend health."""
+        report = rate_limiter.run_logical_dry_run()
+        status_code = 200 if report.get("overall_status") == "pass" else 503
+        return jsonify(report), status_code
+
     @app.route("/admin/reset", methods=["POST"])
+    @admin_auth
     def admin_reset() -> tuple[Any, int]:
         """POST /admin/reset - Reset all rate limit state."""
         rate_limiter.repository.clear()
@@ -103,6 +156,7 @@ def create_routes(
     # --- Advanced Feature Endpoints ---
 
     @app.route("/admin/adaptive", methods=["GET"])
+    @admin_auth
     def admin_adaptive() -> tuple[Any, int]:
         """GET /admin/adaptive - Adaptive rate limiter status."""
         adaptive = current_app.config.get("ADAPTIVE")
@@ -111,16 +165,20 @@ def create_routes(
         return jsonify(adaptive.get_status()), 200
 
     @app.route("/admin/circuit-breaker", methods=["GET"])
+    @admin_auth
     def admin_circuit_breaker() -> tuple[Any, int]:
         """GET /admin/circuit-breaker - Circuit breaker status."""
         from app.repositories.resilient_repository import ResilientRepository
 
         repo = rate_limiter.repository
         if isinstance(repo, ResilientRepository):
-            return jsonify(repo.circuit_breaker.get_status()), 200
+            status = repo.circuit_breaker.get_status()
+            status["enabled"] = True
+            return jsonify(status), 200
         return jsonify({"enabled": False, "state": "not_configured"}), 200
 
     @app.route("/admin/quotas", methods=["GET"])
+    @admin_auth
     def admin_quotas() -> tuple[Any, int]:
         """GET /admin/quotas - Quota pool status."""
         quota_manager = current_app.config.get("QUOTA_MANAGER")
@@ -129,6 +187,7 @@ def create_routes(
         return jsonify(quota_manager.get_all_pools()), 200
 
     @app.route("/admin/coalescing", methods=["GET"])
+    @admin_auth
     def admin_coalescing() -> tuple[Any, int]:
         """GET /admin/coalescing - Request coalescing stats."""
         coalescer = current_app.config.get("COALESCER")
@@ -137,6 +196,7 @@ def create_routes(
         return jsonify(coalescer.get_stats()), 200
 
     @app.route("/admin/weights", methods=["GET"])
+    @admin_auth
     def admin_weights() -> tuple[Any, int]:
         """GET /admin/weights - Weighted operation config."""
         weighted = current_app.config.get("WEIGHTED")

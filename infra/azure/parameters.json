@@ -1,0 +1,45 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "namePrefix": {
+      "value": "custom-rate-limiter"
+    },
+    "containerImage": {
+      "value": "ghcr.io/your-org/custom-rate-limiter:latest"
+    },
+    "containerCpu": {
+      "value": "0.5"
+    },
+    "containerMemory": {
+      "value": "1Gi"
+    },
+    "targetPort": {
+      "value": 5000
+    },
+    "minReplicas": {
+      "value": 1
+    },
+    "maxReplicas": {
+      "value": 5
+    },
+    "rateLimitStorage": {
+      "value": "memory"
+    },
+    "fooAlgorithm": {
+      "value": "fixed_window"
+    },
+    "barAlgorithm": {
+      "value": "sliding_window_log"
+    },
+    "adaptiveEnabled": {
+      "value": true
+    },
+    "coalescingEnabled": {
+      "value": true
+    },
+    "circuitBreakerEnabled": {
+      "value": true
+    }
+  }
+}

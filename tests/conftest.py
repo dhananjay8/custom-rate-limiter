@@ -94,9 +94,69 @@ def app(test_settings: Settings) -> Flask:
 
 
 @pytest.fixture
+def admin_token() -> str:
+    """Admin token used for protected admin tests."""
+    return "test-admin-token"
+
+
+@pytest.fixture
+def admin_token_client(admin_token: str) -> FlaskClient:
+    """Create test client with admin token required."""
+    settings = Settings(
+        app_env="testing",
+        log_level="DEBUG",
+        rate_limit_storage=StorageBackend.MEMORY,
+        foo_algorithm=AlgorithmType.FIXED_WINDOW,
+        bar_algorithm=AlgorithmType.SLIDING_WINDOW_LOG,
+        client_basic_foo_limit=10,
+        client_basic_foo_window=60,
+        client_basic_bar_limit=20,
+        client_basic_bar_window=60,
+        client_premium_foo_limit=100,
+        client_premium_foo_window=60,
+        client_premium_bar_limit=250,
+        client_premium_bar_window=60,
+        adaptive_enabled=False,
+        coalescing_enabled=False,
+        circuit_breaker_enabled=False,
+        admin_token=admin_token,
+    )
+    application = create_app(settings=settings)
+    application.config["TESTING"] = True
+    return application.test_client()
+
+
+@pytest.fixture
 def client(app: Flask) -> FlaskClient:
     """Create test client."""
     return app.test_client()
+
+
+@pytest.fixture
+def shadow_enabled_client() -> FlaskClient:
+    """Test client with shadow mode enabled."""
+    settings = Settings(
+        app_env="testing",
+        log_level="DEBUG",
+        rate_limit_storage=StorageBackend.MEMORY,
+        foo_algorithm=AlgorithmType.FIXED_WINDOW,
+        bar_algorithm=AlgorithmType.SLIDING_WINDOW_LOG,
+        client_basic_foo_limit=10,
+        client_basic_foo_window=60,
+        client_basic_bar_limit=20,
+        client_basic_bar_window=60,
+        client_premium_foo_limit=100,
+        client_premium_foo_window=60,
+        client_premium_bar_limit=250,
+        client_premium_bar_window=60,
+        adaptive_enabled=False,
+        coalescing_enabled=False,
+        circuit_breaker_enabled=False,
+        shadow_mode_enabled=True,
+    )
+    application = create_app(settings=settings)
+    application.config["TESTING"] = True
+    return application.test_client()
 
 
 @pytest.fixture

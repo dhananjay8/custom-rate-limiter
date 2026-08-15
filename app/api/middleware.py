@@ -7,7 +7,7 @@ import uuid
 from functools import wraps
 from typing import Any, Callable
 
-from flask import Flask, Response, g, jsonify, request
+from flask import Flask, Response, current_app, g, jsonify, request
 
 from app.auth.bearer_auth import BearerAuthenticator
 from app.exceptions import AuthenticationError
@@ -81,6 +81,40 @@ def require_auth(authenticator: BearerAuthenticator) -> Callable[..., Any]:
     return decorator
 
 
+def require_admin_auth(admin_token: str | None) -> Callable[..., Any]:
+    """Decorator that requires a valid admin token for admin endpoints.
+
+    Args:
+        admin_token: The expected admin token. If None, admin routes are public.
+
+    Returns:
+        Decorator function.
+    """
+
+    def decorator(f: Callable[..., Any]) -> Callable[..., Any]:
+        @wraps(f)
+        def decorated_function(*args: Any, **kwargs: Any) -> Any:
+            if admin_token is None:
+                return f(*args, **kwargs)
+
+            auth_header = request.headers.get("Authorization")
+            if not auth_header:
+                return jsonify({"error": "Authorization header is required"}), 401
+
+            parts = auth_header.split(" ", 1)
+            if len(parts) != 2 or parts[0].lower() != "bearer":
+                return jsonify({"error": "Invalid authorization format. Use: Bearer <admin-token>"}), 401
+
+            if parts[1].strip() != admin_token:
+                return jsonify({"error": "Invalid admin token"}), 403
+
+            return f(*args, **kwargs)
+
+        return decorated_function
+
+    return decorator
+
+
 def require_rate_limit(
     rate_limiter: RateLimiterService, endpoint_name: str
 ) -> Callable[..., Any]:
@@ -101,9 +135,47 @@ def require_rate_limit(
             if not client_id:
                 return jsonify({"error": "Authentication required"}), 401
 
-            result = rate_limiter.check_rate_limit(
-                client_id, endpoint_name, method=request.method
+            request_weight: int | None = None
+            raw_weight = request.headers.get("X-Request-Weight")
+            if raw_weight is not None:
+                try:
+                    request_weight = int(raw_weight)
+                except ValueError:
+                    return jsonify({"error": "X-Request-Weight must be an integer"}), 400
+
+                if request_weight < 1:
+                    return jsonify({"error": "X-Request-Weight must be >= 1"}), 400
+
+            shadow_mode_enabled = current_app.config.get("SETTINGS", {}).shadow_mode_enabled
+            is_shadow = (
+                shadow_mode_enabled
+                and request.headers.get("X-Shadow-Mode", "").lower() == "true"
             )
+
+            result = rate_limiter.check_rate_limit(
+                client_id,
+                endpoint_name,
+                method=request.method,
+                request_weight=request_weight,
+                shadow=is_shadow,
+            )
+
+            if is_shadow:
+                response = jsonify({
+                    "success": True,
+                    "shadow": True,
+                    "decision": "allowed" if result.allowed else "rejected",
+                    "limit": result.limit,
+                    "remaining": result.remaining,
+                    "reset_at": int(result.reset_at),
+                })
+                response.headers["X-Shadow-Decision"] = (
+                    "allowed" if result.allowed else "rejected"
+                )
+                response.headers["X-Shadow-Remaining"] = str(result.remaining)
+                response.headers["X-Shadow-Allowed"] = str(result.allowed).lower()
+                return response, 200
+
             g.rate_limit_result = result
 
             if not result.allowed:

@@ -98,6 +98,31 @@ class Settings(BaseSettings):
     bar_get_weight: int = Field(default=1, ge=1, description="Weight for GET /bar")
     bar_post_weight: int = Field(default=3, ge=1, description="Weight for POST /bar")
 
+    # Dynamic configuration
+    dynamic_config_enabled: bool = Field(
+        default=False, description="Enable runtime dynamic configuration updates"
+    )
+    dynamic_config_path: str = Field(
+        default="dynamic_config.json",
+        description="Path to persistent dynamic configuration file",
+    )
+
+    # Shadow mode
+    shadow_mode_enabled: bool = Field(
+        default=False,
+        description="Enable shadow mode rate limiting via X-Shadow-Mode header",
+    )
+
+    # Admin authentication (optional but recommended for production)
+    admin_token: str | None = Field(
+        default=None,
+        description="Bearer token required for admin endpoints. If unset, admin routes are public.",
+    )
+    admin_token_header: str = Field(
+        default="Authorization",
+        description="HTTP header name used to pass the admin token",
+    )
+
     # Algorithm mapping per endpoint
     foo_algorithm: AlgorithmType = Field(
         default=AlgorithmType.FIXED_WINDOW, description="Algorithm for /foo endpoint"

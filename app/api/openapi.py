@@ -44,6 +44,13 @@ OPENAPI_SPEC: dict[str, Any] = {
                         "required": False,
                         "schema": {"type": "integer", "default": 1},
                         "description": "Custom weight for this request (defaults to endpoint config)",
+                    },
+                    {
+                        "name": "X-Shadow-Mode",
+                        "in": "header",
+                        "required": False,
+                        "schema": {"type": "boolean", "default": False},
+                        "description": "When true and shadow mode is enabled, returns the rate limit decision without enforcing it",
                     }
                 ],
                 "responses": {
@@ -90,6 +97,26 @@ OPENAPI_SPEC: dict[str, Any] = {
                             }
                         },
                     },
+                    "400": {
+                        "description": "Invalid request weight",
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/Error"},
+                                "examples": {
+                                    "non_integer": {
+                                        "value": {
+                                            "error": "X-Request-Weight must be an integer"
+                                        }
+                                    },
+                                    "invalid_min": {
+                                        "value": {
+                                            "error": "X-Request-Weight must be >= 1"
+                                        }
+                                    },
+                                },
+                            }
+                        },
+                    },
                     "403": {
                         "description": "Unknown client",
                         "content": {
@@ -118,6 +145,54 @@ OPENAPI_SPEC: dict[str, Any] = {
                         },
                     },
                 },
+            },
+            "post": {
+                "summary": "Rate-limited write endpoint (foo)",
+                "description": "Write operation for /foo. Consumes `FOO_POST_WEIGHT` units by default (configurable via X-Request-Weight).",
+                "operationId": "postFoo",
+                "tags": ["Rate Limited Endpoints"],
+                "security": [{"BearerAuth": []}],
+                "parameters": [
+                    {
+                        "name": "X-Request-Weight",
+                        "in": "header",
+                        "required": False,
+                        "schema": {"type": "integer", "default": 5},
+                        "description": "Custom weight for this request (defaults to endpoint config)",
+                    },
+                    {
+                        "name": "X-Shadow-Mode",
+                        "in": "header",
+                        "required": False,
+                        "schema": {"type": "boolean", "default": False},
+                        "description": "When true and shadow mode is enabled, returns the rate limit decision without enforcing it",
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Request allowed",
+                        "headers": {
+                            "X-RateLimit-Limit": {"schema": {"type": "integer"}},
+                            "X-RateLimit-Remaining": {"schema": {"type": "integer"}},
+                            "X-RateLimit-Reset": {"schema": {"type": "integer"}},
+                            "X-Request-ID": {"schema": {"type": "string"}},
+                        },
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "success": {"type": "boolean", "example": True}
+                                    },
+                                }
+                            }
+                        },
+                    },
+                    "401": {"$ref": "#/paths/~1foo/get/responses/401"},
+                    "400": {"$ref": "#/paths/~1foo/get/responses/400"},
+                    "403": {"$ref": "#/paths/~1foo/get/responses/403"},
+                    "429": {"$ref": "#/paths/~1foo/get/responses/429"},
+                },
             }
         },
         "/bar": {
@@ -127,6 +202,22 @@ OPENAPI_SPEC: dict[str, Any] = {
                 "operationId": "getBar",
                 "tags": ["Rate Limited Endpoints"],
                 "security": [{"BearerAuth": []}],
+                "parameters": [
+                    {
+                        "name": "X-Request-Weight",
+                        "in": "header",
+                        "required": False,
+                        "schema": {"type": "integer", "default": 1},
+                        "description": "Custom weight for this request (defaults to endpoint config)",
+                    },
+                    {
+                        "name": "X-Shadow-Mode",
+                        "in": "header",
+                        "required": False,
+                        "schema": {"type": "boolean", "default": False},
+                        "description": "When true and shadow mode is enabled, returns the rate limit decision without enforcing it",
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "Request allowed",
@@ -142,6 +233,55 @@ OPENAPI_SPEC: dict[str, Any] = {
                         },
                     },
                     "401": {"$ref": "#/paths/~1foo/get/responses/401"},
+                    "400": {"$ref": "#/paths/~1foo/get/responses/400"},
+                    "403": {"$ref": "#/paths/~1foo/get/responses/403"},
+                    "429": {"$ref": "#/paths/~1foo/get/responses/429"},
+                },
+            },
+            "post": {
+                "summary": "Rate-limited write endpoint (bar)",
+                "description": "Write operation for /bar. Consumes `BAR_POST_WEIGHT` units by default (configurable via X-Request-Weight).",
+                "operationId": "postBar",
+                "tags": ["Rate Limited Endpoints"],
+                "security": [{"BearerAuth": []}],
+                "parameters": [
+                    {
+                        "name": "X-Request-Weight",
+                        "in": "header",
+                        "required": False,
+                        "schema": {"type": "integer", "default": 3},
+                        "description": "Custom weight for this request (defaults to endpoint config)",
+                    },
+                    {
+                        "name": "X-Shadow-Mode",
+                        "in": "header",
+                        "required": False,
+                        "schema": {"type": "boolean", "default": False},
+                        "description": "When true and shadow mode is enabled, returns the rate limit decision without enforcing it",
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Request allowed",
+                        "headers": {
+                            "X-RateLimit-Limit": {"schema": {"type": "integer"}},
+                            "X-RateLimit-Remaining": {"schema": {"type": "integer"}},
+                            "X-RateLimit-Reset": {"schema": {"type": "integer"}},
+                            "X-Request-ID": {"schema": {"type": "string"}},
+                        },
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "success": {"type": "boolean", "example": True}
+                                    },
+                                }
+                            }
+                        },
+                    },
+                    "401": {"$ref": "#/paths/~1foo/get/responses/401"},
+                    "400": {"$ref": "#/paths/~1foo/get/responses/400"},
                     "403": {"$ref": "#/paths/~1foo/get/responses/403"},
                     "429": {"$ref": "#/paths/~1foo/get/responses/429"},
                 },
@@ -184,17 +324,95 @@ OPENAPI_SPEC: dict[str, Any] = {
                 },
             }
         },
+        "/metrics/prometheus": {
+            "get": {
+                "summary": "Prometheus metrics",
+                "description": "Returns metrics in Prometheus exposition format for scraping.",
+                "operationId": "getPrometheusMetrics",
+                "tags": ["Monitoring"],
+                "responses": {
+                    "200": {
+                        "description": "Prometheus exposition text",
+                        "content": {"text/plain": {"schema": {"type": "string"}}},
+                    }
+                },
+            }
+        },
         "/admin/config": {
             "get": {
                 "summary": "Current configuration",
                 "description": "Returns current rate limiter configuration including algorithms and client limits.",
                 "operationId": "getAdminConfig",
                 "tags": ["Admin"],
+                "security": [{"AdminToken": []}],
                 "responses": {
                     "200": {
                         "description": "Configuration data",
                         "content": {"application/json": {"schema": {"type": "object"}}},
                     }
+                },
+            },
+            "post": {
+                "summary": "Update configuration dynamically",
+                "description": "Applies a runtime configuration update and persists it. Requires DYNAMIC_CONFIG_ENABLED=true.",
+                "operationId": "postAdminConfig",
+                "tags": ["Admin"],
+                "security": [{"AdminToken": []}],
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "clients": {"type": "object"},
+                                    "algorithms": {"type": "object"},
+                                    "weights": {"type": "object"},
+                                },
+                            }
+                        }
+                    },
+                },
+                "responses": {
+                    "200": {
+                        "description": "Configuration updated",
+                        "content": {"application/json": {"schema": {"type": "object"}}},
+                    },
+                    "400": {
+                        "description": "Invalid configuration",
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/Error"}
+                            }
+                        },
+                    },
+                    "503": {
+                        "description": "Dynamic configuration is disabled",
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/Error"}
+                            }
+                        },
+                    },
+                },
+            }
+        },
+        "/admin/dry-run": {
+            "get": {
+                "summary": "Logical dry-run diagnostics",
+                "description": "Runs non-invasive checks across configuration and storage health.",
+                "operationId": "getAdminDryRun",
+                "tags": ["Admin"],
+                "security": [{"AdminToken": []}],
+                "responses": {
+                    "200": {
+                        "description": "All checks passed",
+                        "content": {"application/json": {"schema": {"type": "object"}}},
+                    },
+                    "503": {
+                        "description": "One or more checks failed",
+                        "content": {"application/json": {"schema": {"type": "object"}}},
+                    },
                 },
             }
         },
@@ -204,6 +422,7 @@ OPENAPI_SPEC: dict[str, Any] = {
                 "description": "Resets all rate limit counters and metrics.",
                 "operationId": "postAdminReset",
                 "tags": ["Admin"],
+                "security": [{"AdminToken": []}],
                 "responses": {
                     "200": {
                         "description": "Reset successful",
@@ -222,6 +441,7 @@ OPENAPI_SPEC: dict[str, Any] = {
                 "description": "Returns current system load metrics and adaptive multiplier.",
                 "operationId": "getAdaptiveStatus",
                 "tags": ["Admin"],
+                "security": [{"AdminToken": []}],
                 "responses": {
                     "200": {
                         "description": "Adaptive status",
@@ -236,6 +456,7 @@ OPENAPI_SPEC: dict[str, Any] = {
                 "description": "Returns circuit breaker state and failure counts.",
                 "operationId": "getCircuitBreakerStatus",
                 "tags": ["Admin"],
+                "security": [{"AdminToken": []}],
                 "responses": {
                     "200": {
                         "description": "Circuit breaker status",
@@ -250,9 +471,40 @@ OPENAPI_SPEC: dict[str, Any] = {
                 "description": "Returns all shared quota pool usage.",
                 "operationId": "getQuotaPoolStatus",
                 "tags": ["Admin"],
+                "security": [{"AdminToken": []}],
                 "responses": {
                     "200": {
                         "description": "Quota pool data",
+                        "content": {"application/json": {"schema": {"type": "object"}}},
+                    }
+                },
+            }
+        },
+        "/admin/coalescing": {
+            "get": {
+                "summary": "Request coalescing stats",
+                "description": "Returns coalescing cache stats and hit-rate.",
+                "operationId": "getCoalescingStatus",
+                "tags": ["Admin"],
+                "security": [{"AdminToken": []}],
+                "responses": {
+                    "200": {
+                        "description": "Coalescing stats",
+                        "content": {"application/json": {"schema": {"type": "object"}}},
+                    }
+                },
+            }
+        },
+        "/admin/weights": {
+            "get": {
+                "summary": "Weighted operation configuration",
+                "description": "Returns endpoint/method weight mapping used for weighted rate limiting.",
+                "operationId": "getWeightConfig",
+                "tags": ["Admin"],
+                "security": [{"AdminToken": []}],
+                "responses": {
+                    "200": {
+                        "description": "Weight configuration",
                         "content": {"application/json": {"schema": {"type": "object"}}},
                     }
                 },
@@ -275,7 +527,12 @@ OPENAPI_SPEC: dict[str, Any] = {
                 "type": "http",
                 "scheme": "bearer",
                 "description": "Client ID passed as Bearer token: `Authorization: Bearer <client-id>`",
-            }
+            },
+            "AdminToken": {
+                "type": "http",
+                "scheme": "bearer",
+                "description": "Admin operations require `Authorization: Bearer <admin-token>` when ADMIN_TOKEN is configured",
+            },
         },
         "schemas": {
             "Error": {
@@ -299,6 +556,7 @@ OPENAPI_SPEC: dict[str, Any] = {
                     "algorithms": {"type": "object"},
                     "circuit_breaker": {"type": "object"},
                     "adaptive": {"type": "object"},
+                    "uptime_seconds": {"type": "number"},
                 },
             },
             "MetricsResponse": {
