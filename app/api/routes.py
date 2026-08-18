@@ -9,6 +9,7 @@ from flask import Flask, current_app, jsonify, request
 
 from app.api.middleware import require_admin_auth, require_auth, require_rate_limit
 from app.auth.bearer_auth import BearerAuthenticator
+from app.config.settings import get_settings
 from app.services.dynamic_config import DynamicConfigManager
 from app.services.rate_limiter import RateLimiterService
 
@@ -30,7 +31,7 @@ def create_routes(
         dynamic_config: Optional dynamic configuration manager.
     """
     auth = require_auth(authenticator)
-    admin_auth = require_admin_auth(admin_token)
+    admin_auth = require_admin_auth()
 
     # --- Rate Limited Endpoints ---
 
@@ -71,8 +72,11 @@ def create_routes(
         storage_healthy = rate_limiter.repository.health_check()
         dry_run = rate_limiter.run_logical_dry_run()
 
-        status = "healthy" if storage_healthy else "degraded"
-        http_status = 200 if storage_healthy else 503
+        storage_test = rate_limiter.run_storage_synthetic_test()
+        storage_ok = storage_healthy and storage_test["status"] == "pass"
+
+        status = "healthy" if storage_ok else "degraded"
+        http_status = 200 if storage_ok else 503
         started_at = app.config.get("APP_START_TIME", time.time())
         uptime_seconds = round(max(0.0, time.time() - started_at), 2)
 
@@ -81,6 +85,7 @@ def create_routes(
             "storage": {
                 "backend": settings.rate_limit_storage.value,
                 "healthy": storage_healthy,
+                "synthetic_test": storage_test,
             },
             "algorithms": {
                 endpoint: algo.name
@@ -203,3 +208,39 @@ def create_routes(
         if weighted is None:
             return jsonify({"enabled": False}), 200
         return jsonify(weighted.get_config()), 200
+
+    @app.route("/admin/reload", methods=["POST"])
+    @admin_auth
+    def admin_reload() -> tuple[Any, int]:
+        """POST /admin/reload - Hot-reload .env and settings."""
+        try:
+            old_token = current_app.config.get("ADMIN_TOKEN")
+            new_settings = get_settings()
+            current_app.config["SETTINGS"] = new_settings
+            current_app.config["ADMIN_TOKEN"] = new_settings.admin_token
+
+            audit = current_app.config.get("AUDIT_LOGGER")
+            if audit is not None:
+                audit.record(
+                    action="admin.reload",
+                    actor="admin",
+                    resource="/admin/reload",
+                    details={"token_rotated": (old_token != new_settings.admin_token)},
+                )
+
+            return jsonify({
+                "status": "reloaded",
+                "admin_token_configured": new_settings.admin_token is not None,
+            }), 200
+        except Exception as e:
+            return jsonify({"error": f"Reload failed: {e}"}), 500
+
+    @app.route("/admin/audit", methods=["GET"])
+    @admin_auth
+    def admin_audit() -> tuple[Any, int]:
+        """GET /admin/audit - Recent admin audit log."""
+        audit = current_app.config.get("AUDIT_LOGGER")
+        if audit is None:
+            return jsonify({"enabled": False}), 200
+        limit = request.args.get("limit", type=int) or 100
+        return jsonify({"enabled": True, "entries": audit.get_log(limit=limit)}), 200

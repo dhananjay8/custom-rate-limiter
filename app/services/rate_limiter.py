@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import threading
 import time
+import uuid
 from typing import TYPE_CHECKING, Any
 
 from app.algorithms.base import RateLimitAlgorithm, RateLimitResult
 from app.config.settings import AlgorithmType, ClientConfig, ClientEndpointConfig
 from app.logging.structured import get_logger
 from app.repositories.base import RateLimitRepository
+from app.services.time_of_day import TimeOfDayPolicy
 
 if TYPE_CHECKING:
     from app.services.adaptive import AdaptiveRateLimiter
@@ -42,6 +44,7 @@ class RateLimiterService:
         coalescer: RequestCoalescer | None = None,
         quota_manager: QuotaManager | None = None,
         shadow_repository: RateLimitRepository | None = None,
+        time_of_day: TimeOfDayPolicy | None = None,
     ) -> None:
         """Initialize the rate limiter service.
 
@@ -70,6 +73,7 @@ class RateLimiterService:
 
             shadow_repository = MemoryRepository()
         self._shadow_repository = shadow_repository
+        self._time_of_day = time_of_day or TimeOfDayPolicy()
 
     def check_rate_limit(
         self,
@@ -143,10 +147,14 @@ class RateLimiterService:
                 f"No endpoint configuration for client={client_id}, endpoint={endpoint}"
             )
 
-        # 4. Apply adaptive multiplier to the limit (only in live mode)
+        # 4. Apply time-of-day tier, then adaptive multiplier to the limit (live mode)
         effective_limit = endpoint_config.limit
+        if not shadow:
+            effective_limit = self._time_of_day.get_effective_limit(
+                client_id, endpoint, effective_limit
+            )
         if not shadow and self._adaptive:
-            effective_limit = self._adaptive.get_effective_limit(endpoint_config.limit)
+            effective_limit = self._adaptive.get_effective_limit(effective_limit)
 
         # 5. Run the rate limit algorithm
         result = algorithm.allow_request(
@@ -229,6 +237,41 @@ class RateLimiterService:
         if self._weighted is None:
             return None
         return self._weighted.get_config()
+
+    @property
+    def time_of_day_config(self) -> dict[str, Any]:
+        """Access the time-of-day policy configuration."""
+        return self._time_of_day.get_config()
+
+    def update_time_policy(
+        self,
+        client_id: str,
+        endpoint: str,
+        schedule: list[dict[str, Any]],
+    ) -> None:
+        """Update the time-of-day policy for a client/endpoint."""
+        self._time_of_day.set_policy(client_id, endpoint, schedule)
+        self._logger.info(
+            "Updated time-of-day policy",
+            extra={"client_id": client_id, "endpoint": endpoint, "schedule": schedule},
+        )
+
+    def run_storage_synthetic_test(self) -> dict[str, Any]:
+        """Run a write-read round-trip against the live storage backend.
+
+        This is used by /health to prove the storage dependency is not only
+        reachable but can persist and read a probe value.
+
+        Returns:
+            Dictionary with status and details.
+        """
+        try:
+            key = f"health:probe:{uuid.uuid4()}"
+            self._repository.increment_counter(key, 1)
+            count = self._repository.get_counter(key)
+            return {"status": "pass", "count": count}
+        except Exception as e:
+            return {"status": "fail", "error": str(e)}
 
     def update_client_endpoint(
         self,

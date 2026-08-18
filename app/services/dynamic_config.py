@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 from app.algorithms.factory import AlgorithmFactory
 from app.config.settings import AlgorithmType, ClientConfig, ClientEndpointConfig
 from app.logging.structured import get_logger
+from app.services.config_cache import ConfigCache
 
 if TYPE_CHECKING:
     from app.services.rate_limiter import RateLimiterService
@@ -64,6 +65,7 @@ class DynamicConfigManager:
         self._lock = threading.Lock()
         self._logger = get_logger()
         self._last_config: dict[str, Any] = {}
+        self._cache = ConfigCache[dict[str, Any]](ttl_seconds=1.0, max_size=8)
 
         if self._file_path and os.path.exists(self._file_path):
             try:
@@ -97,11 +99,16 @@ class DynamicConfigManager:
             weights = update.get("weights", {})
             self._update_weights(weights)
 
+            time_policies = update.get("time_policies", {})
+            self._update_time_policies(time_policies)
+
             current = self._current_config()
             self._last_config = current
 
             if save and self._file_path:
                 self._save(update)
+
+            self._cache.invalidate("config")
 
             return current
 
@@ -153,6 +160,20 @@ class DynamicConfigManager:
             if self._weighted is not None:
                 self._weighted.configure_endpoint(endpoint, default_cost, method_costs)
 
+    def _update_time_policies(self, time_policies: dict[str, Any]) -> None:
+        """Apply time-of-day tiered policy updates."""
+        for client_id, endpoints in time_policies.items():
+            if not isinstance(endpoints, dict):
+                raise ValueError(
+                    f"Invalid time policy for client {client_id}: expected dict"
+                )
+            for endpoint, schedule in endpoints.items():
+                if not isinstance(schedule, list):
+                    raise ValueError(
+                        f"Invalid time policy for {client_id}/{endpoint}: expected list"
+                    )
+                self._rate_limiter.update_time_policy(client_id, endpoint, schedule)
+
     def _save(self, update: dict[str, Any]) -> None:
         """Persist the update to the configured file path."""
         try:
@@ -179,9 +200,10 @@ class DynamicConfigManager:
             "clients": clients,
             "algorithms": algorithms,
             "weights": self._rate_limiter.weighted_config or {},
+            "time_policies": self._rate_limiter.time_of_day_config.get("rules", {}),
         }
 
     def get_config(self) -> dict[str, Any]:
-        """Return the current dynamic configuration snapshot."""
+        """Return the current dynamic configuration snapshot (cached)."""
         with self._lock:
-            return self._current_config()
+            return self._cache.get_or_load("config", self._current_config)

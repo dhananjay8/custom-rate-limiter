@@ -39,9 +39,9 @@ htmlcov/
 coverage.xml
 
 # Documentation (local only)
-docs/
-crl-discussion-points.md
-crl-architecture.md
+#docs/
+#crl-discussion-points.md
+#crl-architecture.md
 
 # mypy
 .mypy_cache/

@@ -16,6 +16,7 @@ from app.config.settings import Settings, get_settings
 from app.logging.structured import setup_logging
 from app.repositories.factory import RepositoryFactory
 from app.services.adaptive import AdaptiveRateLimiter
+from app.services.audit_log import AuditLogger
 from app.services.coalescing import RequestCoalescer
 from app.services.dynamic_config import DynamicConfigManager
 from app.services.quota_sharing import QuotaManager
@@ -131,6 +132,7 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.config["COALESCER"] = coalescer
     app.config["QUOTA_MANAGER"] = quota_manager
     app.config["ADMIN_TOKEN"] = settings.admin_token
+    app.config["AUDIT_LOGGER"] = AuditLogger()
     app.config["DYNAMIC_CONFIG"] = dynamic_config
 
     # --- Register middleware and routes ---

@@ -37,7 +37,7 @@ def register_middleware(
 
     @app.after_request
     def add_response_headers(response: Response) -> Response:
-        """Add standard response headers."""
+        """Add standard response headers and structured access log."""
         if hasattr(g, "request_id"):
             response.headers["X-Request-ID"] = g.request_id
         if hasattr(g, "rate_limit_result"):
@@ -45,6 +45,24 @@ def register_middleware(
             response.headers["X-RateLimit-Limit"] = str(result.limit)
             response.headers["X-RateLimit-Remaining"] = str(result.remaining)
             response.headers["X-RateLimit-Reset"] = str(int(result.reset_at))
+            if hasattr(g, "rate_limit_cost"):
+                response.headers["X-RateLimit-Cost"] = str(g.rate_limit_cost)
+
+        # Structured request access log
+        if hasattr(g, "start_time"):
+            duration_ms = round((time.time() - g.start_time) * 1000, 3)
+            logger.info(
+                "Request completed",
+                extra={
+                    "request_id": getattr(g, "request_id", None),
+                    "method": request.method,
+                    "path": request.path,
+                    "status_code": response.status_code,
+                    "duration_ms": duration_ms,
+                    "client_id": getattr(g, "client_id", None),
+                    "shadow": request.headers.get("X-Shadow-Mode"),
+                },
+            )
         return response
 
 
@@ -81,20 +99,19 @@ def require_auth(authenticator: BearerAuthenticator) -> Callable[..., Any]:
     return decorator
 
 
-def require_admin_auth(admin_token: str | None) -> Callable[..., Any]:
+def require_admin_auth() -> Callable[..., Any]:
     """Decorator that requires a valid admin token for admin endpoints.
 
-    Args:
-        admin_token: The expected admin token. If None, admin routes are public.
-
-    Returns:
-        Decorator function.
+    The token is read from `current_app.config["ADMIN_TOKEN"]` on every
+    request, so admin credentials can be rotated without restarting the app.
     """
 
     def decorator(f: Callable[..., Any]) -> Callable[..., Any]:
         @wraps(f)
         def decorated_function(*args: Any, **kwargs: Any) -> Any:
+            admin_token = current_app.config.get("ADMIN_TOKEN")
             if admin_token is None:
+                _audit_admin_access(request, "public")
                 return f(*args, **kwargs)
 
             auth_header = request.headers.get("Authorization")
@@ -108,11 +125,24 @@ def require_admin_auth(admin_token: str | None) -> Callable[..., Any]:
             if parts[1].strip() != admin_token:
                 return jsonify({"error": "Invalid admin token"}), 403
 
+            _audit_admin_access(request, "admin")
             return f(*args, **kwargs)
 
         return decorated_function
 
     return decorator
+
+
+def _audit_admin_access(request, actor: str) -> None:
+    """Record an admin endpoint access audit event."""
+    audit = current_app.config.get("AUDIT_LOGGER")
+    if audit is not None:
+        audit.record(
+            action="admin.access",
+            actor=actor,
+            resource=request.path,
+            details={"method": request.method},
+        )
 
 
 def require_rate_limit(
@@ -151,6 +181,16 @@ def require_rate_limit(
                 shadow_mode_enabled
                 and request.headers.get("X-Shadow-Mode", "").lower() == "true"
             )
+
+            cost = 1
+            if request_weight is not None:
+                cost = request_weight
+            else:
+                weighted = current_app.config.get("WEIGHTED")
+                if weighted is not None:
+                    cost = weighted.get_cost(endpoint_name, request.method)
+            cost = max(1, cost)
+            g.rate_limit_cost = cost
 
             result = rate_limiter.check_rate_limit(
                 client_id,
